@@ -1,7 +1,7 @@
 /* eslint-disable import/no-extraneous-dependencies */
 
 import retry from 'async-retry'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs' // Added readFileSync
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs' // Added readFileSync & writeFileSync
 import { basename, dirname, join, resolve } from 'node:path'
 import { cyan, green, red } from 'picocolors'
 import type { RepoInfo } from './helpers/examples'
@@ -226,102 +226,64 @@ export async function createApp({
       eslint,
       srcDir,
       importAlias,
-      skipInstall: true, // Temporarily skip install to modify package.json first
+      skipInstall,
       turbopack,
     })
     hasPackageJson = true
   }
 
   // ==========================================
-  // CUSTOM MODIFICATION START
+  // ADVANCED CUSTOMIZATION START
   // ==========================================
   try {
-    const baseSourceDir = srcDir ? join(root, 'src') : root
+    // 1. Structural Folder Generation
+    // Dynamically choose base folder based on whether the user selected the `src/` directory flag
+    const baseDir = srcDir ? join(root, 'src') : root
+    const foldersToCreate = ['components', 'lib', 'hooks', 'types']
 
-    // 1. Create a modern architecture directory tree
-    const directoriesToCreate = [
-      join(baseSourceDir, 'components'),
-      join(baseSourceDir, 'lib'),
-      join(baseSourceDir, 'hooks'),
-    ]
-
-    for (const dir of directoriesToCreate) {
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true })
-      }
-    }
-
-    // 2. If Tailwind is enabled, drop a standard class-merging utility file (shadcn style)
-    if (tailwind) {
-      const ext = typescript ? 'ts' : 'js'
-      const utilsPath = join(baseSourceDir, 'lib', `utils.${ext}`)
+    console.log(`Generating base folder architecture inside ${cyan(srcDir ? 'src/' : 'root')}...`)
+    
+    for (const folder of foldersToCreate) {
+      const targetFolder = join(baseDir, folder)
+      mkdirSync(targetFolder, { recursive: true })
       
-      const utilsContent = typescript 
-        ? [
-            "import { clsx, type ClassValue } from 'clsx'",
-            "import { twMerge } from 'tailwind-merge'",
-            "",
-            "export function cn(...inputs: ClassValue[]) {",
-            "  return twMerge(clsx(inputs))",
-            "}",
-          ].join('\n')
-        : [
-            "import { clsx } from 'clsx'",
-            "import { twMerge } from 'tailwind-merge'",
-            "",
-            "export function cn(...inputs) {",
-            "  return twMerge(clsx(inputs))",
-            "}",
-          ].join('\n')
-
-      writeFileSync(utilsPath, utilsContent, 'utf-8')
-      console.log(`Created Tailwind helper utility at ${cyan(join(srcDir ? 'src' : '', 'lib', `utils.${ext}`))}`)
+      // Seed a placeholder file into each directory to maintain structural integrity in Git
+      const fileExtension = typescript ? 'ts' : 'js'
+      const placeholderPath = join(targetFolder, `.gitkeep`)
+      if (!existsSync(placeholderPath)) {
+        writeFileSync(placeholderPath, '', 'utf-8')
+      }
     }
 
-    // 3. Inject custom workspace scripts & packages directly into package.json
-    if (existsSync(packageJsonPath)) {
-      const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
+    // 2. Custom package.json Script Modifications
+    if (hasPackageJson && existsSync(packageJsonPath)) {
+      console.log(`Injecting custom workflow scripts into ${cyan('package.json')}...`)
       
-      // Inject workflow optimization scripts
-      pkg.scripts = {
-        ...pkg.scripts,
-        'lint:fix': 'next lint --fix',
-        'format': 'prettier --write "**/*.{js,jsx,ts,tsx,json,css,md}"',
+      const packageJsonRaw = readFileSync(packageJsonPath, 'utf-8')
+      const packageJson = JSON.parse(packageJsonRaw)
+      
+      // Ensure scripts block exists
+      packageJson.scripts = packageJson.scripts || {}
+
+      // Add shorthand quality-of-life and maintenance commands
+      packageJson.scripts['format'] = 'prettier --write "**/*.{js,jsx,ts,tsx,json,md,css}"'
+      packageJson.scripts['clean'] = 'rm -rf .next node_modules out'
+      
+      if (eslint) {
+        packageJson.scripts['lint:fix'] = 'next lint --fix'
       }
-
-      // Automatically add tailwind utilities to dependencies if tailwind is active
-      if (tailwind) {
-        pkg.dependencies = {
-          ...pkg.dependencies,
-          'clsx': '^2.1.1',
-          'tailwind-merge': '^2.3.0',
-        }
-      }
-
-      writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2), 'utf-8')
-      console.log(`Injected custom lifecycle scripts into ${cyan('package.json')}.`)
+      
+      // Overwrite the original package.json file with structured formats
+      writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8')
     }
-
-    // 4. Generate standard .env.local fallback
-    const envPath = join(root, '.env.local')
-    if (!existsSync(envPath)) {
-      const envContent = [
-        '# Next.js Local Environment Variables',
-        'NEXT_PUBLIC_API_URL=http://localhost:3000/api',
-        'DATABASE_URL=postgres://user:password@localhost:5432/db',
-        '',
-      ].join('\n')
-      writeFileSync(envPath, envContent, 'utf-8')
-    }
-
   } catch (customError) {
-    console.warn('Warning: Failed to execute extended system bootstrapping.', customError)
+    console.warn('Warning: Advanced project customizations skipped due to an internal error:', customError)
   }
   // ==========================================
-  // CUSTOM MODIFICATION END
+  // ADVANCED CUSTOMIZATION END
   // ==========================================
 
-  // Run the delayed installer with our custom updates fully injected
+  // Perform dependency installations after our changes are cleanly injected
   if (!skipInstall && hasPackageJson) {
     console.log('Installing packages. This might take a couple of minutes.')
     console.log()
@@ -347,3 +309,24 @@ export async function createApp({
 
   console.log(`${green('Success!')} Created ${appName} at ${appPath}`)
 
+  if (hasPackageJson) {
+    console.log('Inside that directory, you can run several commands:')
+    console.log()
+    console.log(cyan(`  ${packageManager} ${useYarn ? '' : 'run '}dev`))
+    console.log('    Starts the development server.')
+    console.log()
+    console.log(cyan(`  ${packageManager} ${useYarn ? '' : 'run '}build`))
+    console.log('    Builds the app for production.')
+    console.log()
+    console.log(cyan(`  ${packageManager} start`))
+    console.log('    Runs the built app in production mode.')
+    console.log()
+    
+    // Announce the newly injected commands in the final terminal interface log
+    console.log(cyan(`  ${packageManager} run format`))
+    console.log('    Formats your entire codebase using Prettier.')
+    console.log()
+
+    console.log('We suggest that you begin by typing:')
+    console.log()
+    console.log(cyan('  cd'), cdpath)
