@@ -1,7 +1,7 @@
 /* eslint-disable import/no-extraneous-dependencies */
 
 import retry from 'async-retry'
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs' // Added readFileSync
 import { basename, dirname, join, resolve } from 'node:path'
 import { cyan, green, red } from 'picocolors'
 import type { RepoInfo } from './helpers/examples'
@@ -210,13 +210,6 @@ export async function createApp({
     }
 
     hasPackageJson = existsSync(packageJsonPath)
-    if (!skipInstall && hasPackageJson) {
-      console.log('Installing packages. This might take a couple of minutes.')
-      console.log()
-
-      await install(packageManager, isOnline)
-      console.log()
-    }
   } else {
     /**
      * If an example repository is not provided for cloning, proceed
@@ -233,9 +226,108 @@ export async function createApp({
       eslint,
       srcDir,
       importAlias,
-      skipInstall,
+      skipInstall: true, // Temporarily skip install to modify package.json first
       turbopack,
     })
+    hasPackageJson = true
+  }
+
+  // ==========================================
+  // CUSTOM MODIFICATION START
+  // ==========================================
+  try {
+    const baseSourceDir = srcDir ? join(root, 'src') : root
+
+    // 1. Create a modern architecture directory tree
+    const directoriesToCreate = [
+      join(baseSourceDir, 'components'),
+      join(baseSourceDir, 'lib'),
+      join(baseSourceDir, 'hooks'),
+    ]
+
+    for (const dir of directoriesToCreate) {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true })
+      }
+    }
+
+    // 2. If Tailwind is enabled, drop a standard class-merging utility file (shadcn style)
+    if (tailwind) {
+      const ext = typescript ? 'ts' : 'js'
+      const utilsPath = join(baseSourceDir, 'lib', `utils.${ext}`)
+      
+      const utilsContent = typescript 
+        ? [
+            "import { clsx, type ClassValue } from 'clsx'",
+            "import { twMerge } from 'tailwind-merge'",
+            "",
+            "export function cn(...inputs: ClassValue[]) {",
+            "  return twMerge(clsx(inputs))",
+            "}",
+          ].join('\n')
+        : [
+            "import { clsx } from 'clsx'",
+            "import { twMerge } from 'tailwind-merge'",
+            "",
+            "export function cn(...inputs) {",
+            "  return twMerge(clsx(inputs))",
+            "}",
+          ].join('\n')
+
+      writeFileSync(utilsPath, utilsContent, 'utf-8')
+      console.log(`Created Tailwind helper utility at ${cyan(join(srcDir ? 'src' : '', 'lib', `utils.${ext}`))}`)
+    }
+
+    // 3. Inject custom workspace scripts & packages directly into package.json
+    if (existsSync(packageJsonPath)) {
+      const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
+      
+      // Inject workflow optimization scripts
+      pkg.scripts = {
+        ...pkg.scripts,
+        'lint:fix': 'next lint --fix',
+        'format': 'prettier --write "**/*.{js,jsx,ts,tsx,json,css,md}"',
+      }
+
+      // Automatically add tailwind utilities to dependencies if tailwind is active
+      if (tailwind) {
+        pkg.dependencies = {
+          ...pkg.dependencies,
+          'clsx': '^2.1.1',
+          'tailwind-merge': '^2.3.0',
+        }
+      }
+
+      writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2), 'utf-8')
+      console.log(`Injected custom lifecycle scripts into ${cyan('package.json')}.`)
+    }
+
+    // 4. Generate standard .env.local fallback
+    const envPath = join(root, '.env.local')
+    if (!existsSync(envPath)) {
+      const envContent = [
+        '# Next.js Local Environment Variables',
+        'NEXT_PUBLIC_API_URL=http://localhost:3000/api',
+        'DATABASE_URL=postgres://user:password@localhost:5432/db',
+        '',
+      ].join('\n')
+      writeFileSync(envPath, envContent, 'utf-8')
+    }
+
+  } catch (customError) {
+    console.warn('Warning: Failed to execute extended system bootstrapping.', customError)
+  }
+  // ==========================================
+  // CUSTOM MODIFICATION END
+  // ==========================================
+
+  // Run the delayed installer with our custom updates fully injected
+  if (!skipInstall && hasPackageJson) {
+    console.log('Installing packages. This might take a couple of minutes.')
+    console.log()
+
+    await install(packageManager, isOnline)
+    console.log()
   }
 
   if (disableGit) {
@@ -255,22 +347,3 @@ export async function createApp({
 
   console.log(`${green('Success!')} Created ${appName} at ${appPath}`)
 
-  if (hasPackageJson) {
-    console.log('Inside that directory, you can run several commands:')
-    console.log()
-    console.log(cyan(`  ${packageManager} ${useYarn ? '' : 'run '}dev`))
-    console.log('    Starts the development server.')
-    console.log()
-    console.log(cyan(`  ${packageManager} ${useYarn ? '' : 'run '}build`))
-    console.log('    Builds the app for production.')
-    console.log()
-    console.log(cyan(`  ${packageManager} start`))
-    console.log('    Runs the built app in production mode.')
-    console.log()
-    console.log('We suggest that you begin by typing:')
-    console.log()
-    console.log(cyan('  cd'), cdpath)
-    console.log(`  ${cyan(`${packageManager} ${useYarn ? '' : 'run '}dev`)}`)
-  }
-  console.log()
-}
